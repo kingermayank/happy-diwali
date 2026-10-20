@@ -1,0 +1,479 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Open a box of Diwali mithai: lift the lid, pull back the paper, take a laddoo.">
+<title>Mithai Box</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Yatra+One&family=Mukta:wght@400;500;600&display=swap">
+<style>
+  /* Layout: full-screen 3D stage like a product unboxing; one line of copy on top, one action pill at the bottom. */
+  :root {
+    --paper: #f3eee8;        /* studio backdrop */
+    --paper-hi: #fbf9f6;
+    --ink: #3d3530;          /* copy */
+    --muted: #8f857d;
+    --rani: #b8235a;         /* box pink */
+    --gold: #c9973c;         /* foil */
+    --display: "Yatra One", "Mukta", Georgia, serif;
+    --body: "Mukta", system-ui, -apple-system, sans-serif;
+    color-scheme: light;
+  }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: radial-gradient(90% 70% at 50% 35%, var(--paper-hi) 0%, var(--paper) 70%);
+    background-color: var(--paper);
+    color: var(--ink);
+    font-family: var(--body);
+    overflow: hidden;
+  }
+  #stage { position: fixed; inset: 0; }
+  #stage canvas { display: block; width: 100%; height: 100%; cursor: pointer; touch-action: manipulation; }
+  .copy {
+    position: fixed; left: 0; right: 0;
+    top: calc(env(safe-area-inset-top, 0px) + clamp(28px, 8vh, 72px));
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    text-align: center; pointer-events: none;
+    display: grid; gap: 6px; justify-items: center;
+  }
+  .deva { margin: 0; font-family: var(--display); color: var(--rani); font-size: 1rem; letter-spacing: .04em; }
+  h1 {
+    margin: 0; font-weight: 500; font-size: clamp(1.6rem, 5vw, 2.4rem); line-height: 1.15;
+    color: #7d746d; letter-spacing: -0.01em; text-wrap: balance; transition: opacity .35s ease;
+  }
+  h1.swap { opacity: 0; }
+  .action {
+    position: fixed; left: 50%; transform: translateX(-50%);
+    bottom: calc(env(safe-area-inset-bottom, 0px) + clamp(24px, 7vh, 56px));
+    font: 600 1rem/1 var(--body); color: #fff; background: var(--rani);
+    border: 0; border-radius: 999px; padding: 14px 26px; cursor: pointer;
+    box-shadow: 0 8px 24px -10px rgba(184, 35, 90, .7);
+    transition: transform .2s ease, opacity .3s ease, background .3s;
+  }
+  .action:hover { transform: translateX(-50%) translateY(-1px); }
+  .action:active { transform: translateX(-50%) scale(.97); }
+  .action:focus-visible { outline: 3px solid var(--gold); outline-offset: 3px; }
+  .action[disabled] { opacity: .5; cursor: default; }
+  .fallback { position: fixed; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<div id="stage" aria-hidden="true"></div>
+<div class="copy">
+  <p class="deva" lang="hi">शुभ दीपावली</p>
+  <h1 id="line">A box of mithai, just for you</h1>
+</div>
+<button class="action" id="action" type="button">Open the box</button>
+<p class="fallback" id="fallback" hidden>This needs WebGL to draw the box. Happy Diwali all the same!</p>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(async () => {
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const stage = document.getElementById('stage');
+  const line = document.getElementById('line');
+  const action = document.getElementById('action');
+
+  let renderer;
+  try {
+    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  } catch (e) {
+    document.getElementById('fallback').hidden = false;
+    action.hidden = true;
+    return;
+  }
+  renderer.setPixelRatio(Math.min(2, devicePixelRatio || 1));
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 0.92;
+  stage.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 100);
+
+  // ---------- light
+  scene.add(new THREE.HemisphereLight(0xfffaf2, 0xd9cfc4, 0.5));
+  const sun = new THREE.DirectionalLight(0xffffff, 1.15);
+  sun.position.set(-3.5, 7, 4.5);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.radius = 8;
+  sun.shadow.bias = -0.0004;
+  Object.assign(sun.shadow.camera, { left: -5, right: 5, top: 5, bottom: -5, near: 1, far: 20 });
+  scene.add(sun);
+  const fill = new THREE.DirectionalLight(0xffe9d6, 0.35);
+  fill.position.set(4, 3, -2);
+  scene.add(fill);
+  const warm = new THREE.PointLight(0xffb347, 0, 4, 2);
+  warm.position.set(0, 1.1, 0.1);
+  scene.add(warm);
+
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), new THREE.ShadowMaterial({ opacity: 0.16 }));
+  ground.rotation.x = -Math.PI / 2;
+  ground.receiveShadow = true;
+  scene.add(ground);
+
+  // ---------- textures (drawn on canvas, no image files)
+  await Promise.race([
+    Promise.all([document.fonts.load('80px "Yatra One"'), document.fonts.load('600 40px "Mukta"')]),
+    new Promise(r => setTimeout(r, 1500))
+  ]).catch(() => {});
+
+  const RANI = '#c2185b', GOLD = '#f3c46a';
+
+  function diya(ctx, cx, cy, s, color) {
+    ctx.save();
+    ctx.translate(cx, cy); ctx.scale(s, s);
+    ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 6; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    // ring with dots, like a rangoli seal
+    ctx.beginPath(); ctx.arc(0, 0, 120, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(0, 0, 104, 0, Math.PI * 2); ctx.lineWidth = 2.5; ctx.stroke();
+    for (let i = 0; i < 24; i++) {
+      const a = i / 24 * Math.PI * 2;
+      ctx.beginPath(); ctx.arc(Math.cos(a) * 136, Math.sin(a) * 136, 4, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.lineWidth = 6;
+    // lamp bowl
+    ctx.beginPath();
+    ctx.moveTo(-66, 18); ctx.quadraticCurveTo(0, 30, 66, 18);
+    ctx.quadraticCurveTo(52, 70, 0, 72); ctx.quadraticCurveTo(-52, 70, -66, 18);
+    ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-26, 86); ctx.lineTo(26, 86); ctx.stroke();
+    // flame
+    ctx.beginPath();
+    ctx.moveTo(0, 6); ctx.bezierCurveTo(-26, -14, -16, -46, 0, -76);
+    ctx.bezierCurveTo(16, -46, 26, -14, 0, 6); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, -4); ctx.bezierCurveTo(-10, -16, -6, -30, 0, -42);
+    ctx.bezierCurveTo(6, -30, 10, -16, 0, -4); ctx.fill();
+    ctx.restore();
+  }
+
+  function lidTexture() {
+    const c = document.createElement('canvas'); c.width = 1440; c.height = 1000;
+    const x = c.getContext('2d');
+    x.fillStyle = RANI; x.fillRect(0, 0, c.width, c.height);
+    // subtle paper grain
+    for (let i = 0; i < 9000; i++) {
+      x.fillStyle = `rgba(${Math.random() < .5 ? '255,255,255' : '60,0,20'},${Math.random() * 0.035})`;
+      x.fillRect(Math.random() * c.width, Math.random() * c.height, 2, 2);
+    }
+    const cx = c.width / 2, cy = c.height / 2 - 40;
+    // pressed-in foil: dark lip, light lip, then the gold
+    diya(x, cx + 3, cy + 3, 1.15, 'rgba(70,0,25,.35)');
+    diya(x, cx - 2, cy - 2, 1.15, 'rgba(255,220,230,.25)');
+    diya(x, cx, cy, 1.15, GOLD);
+    x.textAlign = 'center';
+    x.fillStyle = GOLD;
+    x.font = '600 44px Mukta, sans-serif';
+    x.letterSpacing = '14px';
+    x.fillText('MITHAI', cx + 7, cy + 250);
+    x.font = '44px "Yatra One", serif';
+    x.letterSpacing = '0px';
+    x.fillStyle = 'rgba(212,162,76,.85)';
+    x.fillText('शुभ दीपावली', cx, cy + 320);
+    const t = new THREE.CanvasTexture(c);
+    t.encoding = THREE.sRGBEncoding; t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    return t;
+  }
+
+  function sheetTexture() {
+    const c = document.createElement('canvas'); c.width = 1200; c.height = 800;
+    const x = c.getContext('2d');
+    x.fillStyle = '#f7efe1'; x.fillRect(0, 0, c.width, c.height);
+    for (let i = 0; i < 5000; i++) {
+      x.fillStyle = `rgba(150,110,60,${Math.random() * 0.03})`;
+      x.fillRect(Math.random() * c.width, Math.random() * c.height, 2, 2);
+    }
+    diya(x, c.width / 2, c.height / 2 - 20, 0.42, RANI);
+    x.textAlign = 'center'; x.fillStyle = 'rgba(184,35,90,.8)';
+    x.font = '600 26px Mukta, sans-serif'; x.letterSpacing = '8px';
+    x.fillText('MADE WITH GHEE & LOVE', c.width / 2 + 4, c.height / 2 + 110);
+    const t = new THREE.CanvasTexture(c);
+    t.encoding = THREE.sRGBEncoding; t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    return t;
+  }
+
+  function tabTexture() {
+    const c = document.createElement('canvas'); c.width = 256; c.height = 112;
+    const x = c.getContext('2d');
+    x.fillStyle = '#e07a2a'; x.fillRect(0, 0, 256, 112);
+    x.fillStyle = '#fff'; x.font = '600 40px Mukta, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle';
+    x.fillText('Pull', 128, 60);
+    const t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding; return t;
+  }
+
+  // ---------- materials
+  const mat = (color, o = {}) => { const m = new THREE.MeshStandardMaterial(Object.assign({ roughness: 0.78, metalness: 0 }, o)); m.color.set(color).convertSRGBToLinear(); return m; };
+  const pink = mat(0xc2185b);
+  const pinkInside = mat(0x9e1049, { roughness: 0.9 });
+  const cream = mat(0xf4ead8, { roughness: 0.92 });
+  const gold = mat(0xd4a24c, { roughness: 0.35, metalness: 0.75 });
+  const lidTop = mat(0xffffff, { map: lidTexture(), roughness: 0.7 });
+
+  const slab = (w, h, d, m, x, y, z, parent) => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
+    mesh.position.set(x, y, z); mesh.castShadow = true; mesh.receiveShadow = true;
+    parent.add(mesh); return mesh;
+  };
+
+  // ---------- the box
+  const W = 3.2, D = 2.2, H = 0.75, T = 0.05;
+  const box = new THREE.Group();
+  scene.add(box);
+
+  const base = new THREE.Group(); box.add(base);
+  slab(W, T, D, pink, 0, T / 2, 0, base);
+  slab(W, H, T, [pink, pink, pink, pink, pink, pinkInside], 0, H / 2, D / 2 - T / 2, base);
+  slab(W, H, T, [pink, pink, pink, pink, pinkInside, pink], 0, H / 2, -D / 2 + T / 2, base);
+  slab(T, H, D - 2 * T, [pinkInside, pink, pink, pink, pink, pink], -W / 2 + T / 2, H / 2, 0, base);
+  slab(T, H, D - 2 * T, [pink, pinkInside, pink, pink, pink, pink], W / 2 - T / 2, H / 2, 0, base);
+  // cream tray inside
+  const IW = W - 2 * T, ID = D - 2 * T;
+  slab(IW, 0.02, ID, cream, 0, T + 0.01, 0, base);
+  slab(IW, 0.36, 0.02, cream, 0, T + 0.18, ID / 2 - 0.01, base);
+  slab(IW, 0.36, 0.02, cream, 0, T + 0.18, -ID / 2 + 0.01, base);
+  slab(0.02, 0.36, ID, cream, -IW / 2 + 0.01, T + 0.18, 0, base);
+  slab(0.02, 0.36, ID, cream, IW / 2 - 0.01, T + 0.18, 0, base);
+  const floorY = T + 0.02;
+
+  const sweets = new THREE.Group(); base.add(sweets);
+  let seed = 7;
+  const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  // besan laddoo: knobbly spheres on gold foil cups
+  const laddooGeo = new THREE.IcosahedronGeometry(0.19, 3);
+  {
+    const p = laddooGeo.attributes.position, v = new THREE.Vector3();
+    const hash = (a, b, c) => { const s = Math.sin(a * 12.9898 + b * 78.233 + c * 37.719) * 43758.5453; return s - Math.floor(s); };
+    for (let i = 0; i < p.count; i++) {
+      v.fromBufferAttribute(p, i);
+      const n = v.clone().normalize();
+      const k = 0.011 * Math.sin(v.x * 55 + 1.3) * Math.sin(v.y * 61) * Math.sin(v.z * 47 + 0.7)
+              + 0.012 * hash(Math.round(v.x * 70), Math.round(v.y * 70), Math.round(v.z * 70));
+      v.addScaledVector(n, k);
+      p.setXYZ(i, v.x, v.y * 0.94, v.z);
+    }
+    laddooGeo.computeVertexNormals();
+  }
+  const laddooMat = mat(0xf26d0c, { roughness: 0.9 });
+  const cupGeo = new THREE.CylinderGeometry(0.2, 0.17, 0.05, 28, 1, true);
+  const cupBase = new THREE.CircleGeometry(0.17, 28); cupBase.rotateX(-Math.PI / 2);
+  for (let r = 0; r < 4; r++) {
+    for (let c = 0; c < 6; c++) {
+      const x = -1.15 + c * 0.46, z = -0.69 + r * 0.46;
+      const cup = new THREE.Mesh(cupGeo, new THREE.MeshStandardMaterial({ color: 0xd4a24c, roughness: 0.35, metalness: 0.75, side: THREE.DoubleSide }));
+      cup.position.set(x, floorY + 0.025, z); cup.receiveShadow = true; sweets.add(cup);
+      const cb = new THREE.Mesh(cupBase, gold); cb.position.set(x, floorY + 0.002, z); sweets.add(cb);
+      const l = new THREE.Mesh(laddooGeo, laddooMat);
+      l.position.set(x, floorY + 0.19, z);
+      l.rotation.set(rand() * 6, rand() * 6, rand() * 6);
+      l.castShadow = true; l.receiveShadow = true;
+      sweets.add(l);
+    }
+  }
+
+  // butter paper sheet, hinged at the back, with a pull tab at the front
+  const SW = IW - 0.1, SD = ID - 0.22, ROWS = 40, sheetY = 0.48;
+  const sheetGeo = new THREE.PlaneGeometry(SW, SD, 1, ROWS);
+  const sheetMat = new THREE.MeshStandardMaterial({ map: sheetTexture(), roughness: 0.9, side: THREE.DoubleSide, transparent: true });
+  const sheet = new THREE.Mesh(sheetGeo, sheetMat);
+  sheet.castShadow = true; sheet.receiveShadow = true;
+  const sheetGroup = new THREE.Group(); sheetGroup.add(sheet); base.add(sheetGroup);
+  const tabGeo = new THREE.PlaneGeometry(0.36, 0.12); tabGeo.rotateX(-Math.PI / 2);
+  const tabMat = new THREE.MeshStandardMaterial({ map: tabTexture(), roughness: 0.8, side: THREE.DoubleSide, transparent: true });
+  const tab = new THREE.Mesh(tabGeo, tabMat); tab.castShadow = true;
+  sheetGroup.add(tab);
+
+  function layoutSheet(t) {
+    const lift = ease.inOut(clamp(t / 0.7));
+    const away = ease.inOut(clamp((t - 0.5) / 0.5));
+    const pos = sheetGeo.attributes.position;
+    let y = sheetY, z = -SD / 2, theta = 0;
+    const ds = SD / ROWS;
+    for (let i = 0; i <= ROWS; i++) {
+      const s = i / ROWS;
+      for (let j = 0; j < 2; j++) pos.setXYZ(i * 2 + j, j === 0 ? -SW / 2 : SW / 2, y, z);
+      // the front curls up more than the back, like paper being peeled up by its tab
+      theta = lift * (0.55 + 1.5 * s * s);
+      y += Math.sin(theta) * ds; z += Math.cos(theta) * ds;
+    }
+    pos.needsUpdate = true;
+    sheetGeo.computeVertexNormals();
+    tab.position.set(0, y + Math.sin(theta) * 0.04, z + Math.cos(theta) * 0.04);
+    tab.rotation.x = -theta;
+    sheetGroup.position.set(0, away * 1.6, -away * 0.9);
+    sheetGroup.rotation.x = -away * 0.3;
+    sheetMat.opacity = tabMat.opacity = 1 - away;
+    sheetGroup.visible = away < 0.995;
+  }
+
+  // lid
+  const LW = W + 0.08, LD = D + 0.08, LH = 0.42;
+  const lid = new THREE.Group(); box.add(lid);
+  slab(LW, T, LD, [pink, pink, lidTop, pinkInside, pink, pink], 0, LH - T / 2, 0, lid);
+  slab(LW, LH - T, T, [pink, pink, pink, pink, pink, pinkInside], 0, (LH - T) / 2, LD / 2 - T / 2, lid);
+  slab(LW, LH - T, T, [pink, pink, pink, pink, pinkInside, pink], 0, (LH - T) / 2, -LD / 2 + T / 2, lid);
+  slab(T, LH - T, LD - 2 * T, [pinkInside, pink, pink, pink, pink, pink], -LW / 2 + T / 2, (LH - T) / 2, 0, lid);
+  slab(T, LH - T, LD - 2 * T, [pink, pinkInside, pink, pink, pink, pink], LW / 2 - T / 2, (LH - T) / 2, 0, lid);
+  const lidRestY = H - LH + T;
+
+  // gold sparks that drift up once the sweets show
+  const N = 140, sparkPos = new Float32Array(N * 3), sparkVel = [];
+  for (let i = 0; i < N; i++) {
+    sparkPos.set([(rand() - .5) * 2.8, 0.3 + rand() * 0.2, (rand() - .5) * 1.8], i * 3);
+    sparkVel.push({ y: 0.004 + rand() * 0.01, d: rand() * 6, life: rand() });
+  }
+  const sparkGeo = new THREE.BufferGeometry();
+  sparkGeo.setAttribute('position', new THREE.BufferAttribute(sparkPos, 3));
+  const sparkMat = new THREE.PointsMaterial({ color: 0xe8b04a, size: 0.035, transparent: true, opacity: 0, depthWrite: false });
+  const sparks = new THREE.Points(sparkGeo, sparkMat);
+  base.add(sparks);
+
+  // ---------- motion helpers
+  const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+  const ease = {
+    inOut: t => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2,
+    out: t => 1 - Math.pow(1 - t, 3),
+    in: t => t * t * t,
+  };
+  const anim = { lid: 0, sheet: 0, cam: 0, glow: 0 };
+  const tweens = {};
+  function to(key, target, ms) {
+    return new Promise(res => {
+      if (reduce) ms = 1;
+      tweens[key] = { from: anim[key], target, start: performance.now(), ms, res };
+    });
+  }
+
+  // ---------- story
+  let stage_ = 0, busy = false;
+  const copy = [
+    ['A box of mithai, just for you', 'Open the box'],
+    ['Lift the paper to see what’s inside', 'Pull the paper'],
+    ['Happy Diwali! Take a laddoo', 'Close the box'],
+  ];
+  function setCopy(i) {
+    line.classList.add('swap');
+    setTimeout(() => { line.textContent = copy[i][0]; line.classList.remove('swap'); }, reduce ? 0 : 300);
+    action.textContent = copy[i][1];
+  }
+  async function next() {
+    if (busy) return;
+    busy = true; action.disabled = true;
+    if (stage_ === 0) {
+      to('cam', 1, 1700);
+      await to('lid', 1, 1500);
+      stage_ = 1;
+    } else if (stage_ === 1) {
+      to('glow', 1, 1600);
+      await to('sheet', 1, 1500);
+      stage_ = 2;
+    } else {
+      to('glow', 0, 600);
+      await to('sheet', 0, 1000);
+      to('cam', 0, 1500);
+      await to('lid', 0, 1400);
+      stage_ = 0;
+    }
+    setCopy(stage_);
+    busy = false; action.disabled = false;
+  }
+  action.addEventListener('click', next);
+
+  // tap on the box itself also works
+  const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+  let downAt = null;
+  renderer.domElement.addEventListener('pointerdown', e => { downAt = [e.clientX, e.clientY]; });
+  renderer.domElement.addEventListener('pointerup', e => {
+    if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 8) return;
+    const r = renderer.domElement.getBoundingClientRect();
+    ndc.set((e.clientX - r.left) / r.width * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+    ray.setFromCamera(ndc, camera);
+    if (ray.intersectObject(box, true).length) next();
+  });
+
+  // gentle tilt toward the pointer
+  const look = { x: 0, y: 0 }, lookNow = { x: 0, y: 0 };
+  addEventListener('pointermove', e => {
+    look.x = e.clientX / innerWidth * 2 - 1;
+    look.y = e.clientY / innerHeight * 2 - 1;
+  }, { passive: true });
+
+  // ---------- camera framing
+  const camA = { pos: new THREE.Vector3(0, 3.5, 6.4), at: new THREE.Vector3(0, 0.25, 0) };
+  const camB = { pos: new THREE.Vector3(0, 6.2, 4.1), at: new THREE.Vector3(0, 0.1, 0.15) };
+  let fit = 1;
+  function resize() {
+    const w = innerWidth, h = innerHeight;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    fit = clamp(1.25 / camera.aspect, 1, 2.1);   // back the camera off on tall phone screens
+    camera.updateProjectionMatrix();
+  }
+  addEventListener('resize', resize);
+  resize();
+
+  const tmpP = new THREE.Vector3(), tmpA = new THREE.Vector3();
+  const clock = new THREE.Clock();
+
+  function frame(now) {
+    const dt = Math.min(0.05, clock.getDelta());
+    for (const k in tweens) {
+      const tw = tweens[k], u = clamp((now - tw.start) / tw.ms);
+      anim[k] = tw.from + (tw.target - tw.from) * u;
+      if (u >= 1) { anim[k] = tw.target; delete tweens[k]; tw.res(); }
+    }
+
+    // lid: lifts straight up, then swings away up and to the right, like the Clay unboxing
+    const u = anim.lid;
+    const rise = ease.inOut(clamp(u / 0.45));
+    const away = ease.in(clamp((u - 0.3) / 0.7));
+    lid.position.set(3.4 * away, lidRestY + 1.1 * rise + 1.8 * away, -1.4 * away);
+    lid.rotation.set(0.1 * rise + 0.15 * away, -0.1 * away, -0.08 * rise - 0.22 * away);
+    lid.visible = u < 0.999;
+
+    layoutSheet(anim.sheet);
+
+    // warm glow and sparks
+    warm.intensity = anim.glow * (1.1 + 0.15 * Math.sin(now / 300));
+    sparkMat.opacity = anim.glow * 0.9;
+    if (anim.glow > 0.01 && !reduce) {
+      for (let i = 0; i < N; i++) {
+        const s = sparkVel[i];
+        s.life += dt * 0.35;
+        if (s.life > 1) { s.life = 0; sparkPos[i * 3 + 1] = 0.3; sparkPos[i * 3] = (rand() - .5) * 2.8; sparkPos[i * 3 + 2] = (rand() - .5) * 1.8; }
+        sparkPos[i * 3 + 1] += s.y;
+        sparkPos[i * 3] += Math.sin(now / 700 + s.d) * 0.0015;
+      }
+      sparkGeo.attributes.position.needsUpdate = true;
+    }
+
+    // box idles with a slow float and leans toward the pointer
+    lookNow.x += (look.x - lookNow.x) * 0.05; lookNow.y += (look.y - lookNow.y) * 0.05;
+    const idle = reduce ? 0 : 1 - anim.cam;
+    box.rotation.y = -0.22 + lookNow.x * 0.16 * (reduce ? 0 : 1);
+    box.rotation.x = lookNow.y * 0.04 * (reduce ? 0 : 1);
+    box.position.y = Math.sin(now / 900) * 0.04 * idle;
+
+    const c = ease.inOut(anim.cam);
+    tmpP.lerpVectors(camA.pos, camB.pos, c).multiplyScalar(fit);
+    tmpA.lerpVectors(camA.at, camB.at, c);
+    camera.position.copy(tmpP); camera.lookAt(tmpA);
+
+    renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+
+</body>
+</html>
