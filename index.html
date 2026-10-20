@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="description" content="Open a box of Diwali mithai: lift the lid, pull back the paper, take a laddoo.">
+<meta name="description" content="Open a box of Diwali mithai: lift the lid, pull back the paper, and eat a laddoo.">
 <title>Mithai Box</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -263,9 +263,17 @@
     }
     laddooGeo.computeVertexNormals();
   }
-  const laddooMat = mat(0xf26d0c, { roughness: 0.9 });
+  // colour lives in the vertices so a bite can show the paler inside
+  const outside = new THREE.Color(0xf26d0c).convertSRGBToLinear(), inside = new THREE.Color(0xf7b45a).convertSRGBToLinear();
+  {
+    const n = laddooGeo.attributes.position.count, col = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) col.set([outside.r, outside.g, outside.b], i * 3);
+    laddooGeo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  }
+  const laddooMat = mat(0xffffff, { roughness: 0.9, vertexColors: true });
   const cupGeo = new THREE.CylinderGeometry(0.2, 0.17, 0.05, 28, 1, true);
   const cupBase = new THREE.CircleGeometry(0.17, 28); cupBase.rotateX(-Math.PI / 2);
+  const laddoos = [];
   for (let r = 0; r < 4; r++) {
     for (let c = 0; c < 6; c++) {
       const x = -1.15 + c * 0.46, z = -0.69 + r * 0.46;
@@ -277,6 +285,7 @@
       l.rotation.set(rand() * 6, rand() * 6, rand() * 6);
       l.castShadow = true; l.receiveShadow = true;
       sweets.add(l);
+      laddoos.push({ mesh: l, baseY: l.position.y, bites: 0, own: false, t0: -1e9, goneAt: 0 });
     }
   }
 
@@ -358,7 +367,7 @@
   const copy = [
     ['A box of mithai, just for you', 'Open the box'],
     ['Lift the paper to see what’s inside', 'Pull the paper'],
-    ['Happy Diwali! Take a laddoo', 'Close the box'],
+    ['Happy Diwali! Tap a laddoo to eat it', 'Close the box'],
   ];
   function setCopy(i) {
     line.classList.add('swap');
@@ -381,6 +390,7 @@
       await to('sheet', 0, 1000);
       to('cam', 0, 1500);
       await to('lid', 0, 1400);
+      refill();
       stage_ = 0;
     }
     setCopy(stage_);
@@ -397,8 +407,117 @@
     const r = renderer.domElement.getBoundingClientRect();
     ndc.set((e.clientX - r.left) / r.width * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
     ray.setFromCamera(ndc, camera);
+    if (stage_ === 2) {
+      const L = laddooAt();
+      if (L) bite(L);
+      return;
+    }
     if (ray.intersectObject(box, true).length) next();
   });
+  renderer.domElement.addEventListener('pointermove', e => {
+    if (stage_ !== 2 || busy) { renderer.domElement.style.cursor = 'pointer'; return; }
+    const r = renderer.domElement.getBoundingClientRect();
+    ndc.set((e.clientX - r.left) / r.width * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+    ray.setFromCamera(ndc, camera);
+    renderer.domElement.style.cursor = laddooAt() ? 'pointer' : 'default';
+  });
+  function laddooAt() {
+    const live = laddoos.filter(L => L.bites < 3).map(L => L.mesh);
+    const hit = ray.intersectObjects(live, false)[0];
+    return hit && laddoos.find(L => L.mesh === hit.object);
+  }
+
+  // ---------- eating: each tap takes a bite out of the laddoo, three bites and it's gone
+  const R = 0.19;
+  const lines = ['Mmm, pure ghee', 'One more bite'];
+  let eaten = 0;
+  function setLine(text) { line.classList.remove('swap'); line.textContent = text; }
+  function bite(L) {
+    if (L.bites >= 3 || performance.now() - L.t0 < 220) return;
+    if (!L.own) { L.mesh.geometry = laddooGeo.clone(); L.own = true; }
+    L.bites++;
+    const m = L.mesh;
+    m.updateMatrixWorld();
+    // bite from the side facing you, moving around the laddoo with each bite
+    const toCam = m.worldToLocal(camera.position.clone()).normalize();
+    const side = new THREE.Vector3(0, 1, 0).applyQuaternion(m.quaternion.clone().invert()).cross(toCam).normalize();
+    const up = toCam.clone().cross(side).normalize();
+    const [a, b] = [[0, 0.25], [0.75, 0.1], [-0.75, 0.05]][L.bites - 1];
+    const dir = toCam.clone().addScaledVector(side, a).addScaledVector(up, b).normalize();
+    const c = dir.clone().multiplyScalar(R * 0.92), rb = R * 0.7;
+    const col = m.geometry.attributes.color;
+    const pos = m.geometry.attributes.position, v = new THREE.Vector3(), d = new THREE.Vector3();
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i);
+      if (v.distanceTo(c) < rb) {
+        d.subVectors(v, c).normalize();
+        v.copy(c).addScaledVector(d, rb);
+        pos.setXYZ(i, v.x, v.y, v.z);
+        col.setXYZ(i, inside.r, inside.g, inside.b);
+      }
+    }
+    pos.needsUpdate = true; col.needsUpdate = true;
+    m.geometry.computeVertexNormals();
+    L.t0 = performance.now();
+    spawnCrumbs(base.worldToLocal(m.localToWorld(c.clone())), L.bites === 3 ? 26 : 16);
+    if (L.bites === 3) {
+      L.goneAt = performance.now() + 260;
+      eaten++;
+      const left = laddoos.length - eaten;
+      setLine(left ? `Gone! ${left} laddoo${left === 1 ? '' : 's'} left` : `You ate all ${laddoos.length}. Happy Diwali!`);
+    } else {
+      setLine(lines[L.bites - 1]);
+    }
+  }
+  function refill() {
+    eaten = 0;
+    for (const L of laddoos) {
+      if (L.own) { L.mesh.geometry.dispose(); L.mesh.geometry = laddooGeo; L.own = false; }
+      L.bites = 0; L.goneAt = 0; L.t0 = -1e9;
+      L.mesh.visible = true; L.mesh.scale.setScalar(1); L.mesh.position.y = L.baseY;
+    }
+    crumbPos.fill(-50); crumbGeo.attributes.position.needsUpdate = true;
+  }
+
+  // crumbs fly off each bite and settle in the tray
+  const CN = 400, crumbPos = new Float32Array(CN * 3).fill(-50), crumbVel = new Float32Array(CN * 3);
+  const crumbGeo = new THREE.BufferGeometry();
+  crumbGeo.setAttribute('position', new THREE.BufferAttribute(crumbPos, 3));
+  const crumbs = new THREE.Points(crumbGeo, new THREE.PointsMaterial({ color: 0xe0650e, size: 0.036 }));
+  crumbs.frustumCulled = false;
+  base.add(crumbs);
+  let crumbNext = 0;
+  function spawnCrumbs(at, n) {
+    for (let k = 0; k < n; k++) {
+      const i = crumbNext++ % CN;
+      crumbPos.set([at.x + (rand() - .5) * 0.08, at.y + (rand() - .5) * 0.06, at.z + (rand() - .5) * 0.08], i * 3);
+      crumbVel.set([(rand() - .5) * 1.4, 0.6 + rand() * 1.2, 0.2 + rand() * 0.9], i * 3);
+    }
+  }
+  function updateEating(now, dt) {
+    for (const L of laddoos) {
+      const k = (now - L.t0) / 320;
+      const hop = k < 1 ? Math.sin(Math.PI * k) : 0;
+      L.mesh.position.y = L.baseY + 0.07 * hop;
+      let s = 1 - 0.06 * hop;
+      if (L.goneAt) {
+        const g = clamp((now - L.goneAt) / 240);
+        s *= 1 - ease.in(g);
+        L.mesh.visible = g < 1;
+      }
+      L.mesh.scale.setScalar(Math.max(0.001, s));
+    }
+    const floor = floorY + 0.012, lim = IW / 2 - 0.03, limZ = ID / 2 - 0.03;
+    for (let i = 0; i < CN; i++) {
+      const j = i * 3;
+      if (crumbPos[j + 1] < -10 || (crumbVel[j] === 0 && crumbVel[j + 1] === 0)) continue;
+      crumbVel[j + 1] -= 6 * dt;
+      crumbPos[j] += crumbVel[j] * dt; crumbPos[j + 1] += crumbVel[j + 1] * dt; crumbPos[j + 2] += crumbVel[j + 2] * dt;
+      crumbPos[j] = clamp(crumbPos[j], -lim, lim); crumbPos[j + 2] = clamp(crumbPos[j + 2], -limZ, limZ);
+      if (crumbPos[j + 1] < floor) { crumbPos[j + 1] = floor; crumbVel[j] = crumbVel[j + 1] = crumbVel[j + 2] = 0; }
+    }
+    crumbGeo.attributes.position.needsUpdate = true;
+  }
 
   // gentle tilt toward the pointer
   const look = { x: 0, y: 0 }, lookNow = { x: 0, y: 0 };
@@ -441,6 +560,7 @@
     lid.visible = u < 0.999;
 
     layoutSheet(anim.sheet);
+    updateEating(now, dt);
 
     // warm glow and sparks
     warm.intensity = anim.glow * (1.1 + 0.15 * Math.sin(now / 300));
